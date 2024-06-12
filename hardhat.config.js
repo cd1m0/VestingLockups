@@ -22,6 +22,13 @@ module.exports = {
     gasPrice: 40,
   },
   networks: {
+    fuzzing: {
+      url: "http://localhost:8545",
+      allowUnlimitedContractSize: true
+    },
+    hardhat: {
+      allowUnlimitedContractSize: true
+    },
     sepolia: {
       url: process.env.SEPOLIA_URL,
       accounts: [process.env.TEST_DEPLOYER_PRIVATE_KEY, process.env.TOKEN_DEPLOYER],
