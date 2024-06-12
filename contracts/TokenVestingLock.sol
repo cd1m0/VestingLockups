@@ -25,10 +25,12 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
   IVesting public immutable hedgeyVesting;
 
   /// @notice for security only a special hedgey plan creator address is able to mint these NFTs in addition to vesting admin of a plan
+  /// #if_updated "only set in constructor or by manager" msg.sig == bytes4(uint32(0x0)) || msg.sender == manager;
   address public hedgeyPlanCreator;
 
   string public baseURI;
   /// @dev manager for setting the baseURI & hedgeyPlanCreator contract;
+  /// #if_updated "only set in constructor or by manager" msg.sig == bytes4(uint32(0x0)) || msg.sender == old(manager);
   address internal manager;
 
   /// @notice the internal counter of tokenIds that will be mapped to each vestinglock object and the associated NFT
@@ -74,8 +76,12 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
 
   /// @notice this is a mapping of the approved redeemeers that can redeem the vested tokens or unlock the unlocked tokens, used as a mechanism for redeeming on behalf
   /// @dev if the user sets the zero address to be true, then it is a global approval for anyone to redeem
+  /// #if_assigned[lockId][addr] "Only owner or approved operator may add/remove redeemers"
+  ///   msg.sender == ownerOf(lockId) || _redeemerOperators[ownerOf(lockId)][msg.sender];
   mapping(uint256 => mapping(address => bool)) internal _approvedRedeemers;
 
+  /// #if_assigned[owner][addr] "Only owner may add/remove redeemers"
+  ///   msg.sender == owner;
   mapping(address => mapping(address => bool)) internal _redeemerOperators;
 
   /// @notice separate mapping specifically defining if the vestingAdmin can redeem on behalf of end users
@@ -287,6 +293,11 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
   /// the function will toggle the vestingAdminTransfer to false for the vesting plan so that it cannot be pulled out of the lockup contract without approval from the recipient
   /// @dev this function is called either at the creation of both a new vesting plan with a lockup, which is the most common use case and done by the hdedgeyPlanCreator
   /// or it can be done after the fact if a vesting plan is transferred into this contract, and then the vesting admin calls this function to add a lockup schedule to the unallocated vesting plan
+  /// #try "vesting tokens without locks" vestingTokenId == 2 && recipient.beneficiary == address(bytes20(bytes("0xAaAaaAAAaAaaAaAaAaaAAaAaAAAAAaAAAaaAaAa2")));
+  /// #if_succeeds "can't create a lockup for a vesting plan that is already allocated" old(_allocatedVestingTokenIds[vestingTokenId]) != _allocatedVestingTokenIds[vestingTokenId] && _allocatedVestingTokenIds[vestingTokenId] == true;
+  /// #if_succeeds "token id increments" old(currentTokenId()) < currentTokenId();
+  /// #if_succeeds "vesting lock nft is minted to beneficiary" this.ownerOf(currentTokenId()) == recipient.beneficiary;
+  /// #if_succeeds "vesting nft should be transferred to this contract" old(hedgeyVesting.ownerOf(vestingTokenId)) == address(this) && hedgeyVesting.ownerOf(vestingTokenId) == address(this);
   function createVestingLock(
     Recipient memory recipient,
     uint256 vestingTokenId,
@@ -336,6 +347,8 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
   /// the function will pull any tokens that are vested into this contract, and then unlock any avilable and unlocked tokens and transfer them to the owner of the NFT - the beneficiary
   /// if there is nothing vested or unlocked, it will simply skip the redemption & unlocking and move onto the next tokenId rather than reverting the whole transaction
   /// this allows for a vestingAdmin who is redeeming on behalf of a group of users to redeem all of the tokens they are an admin for without having to calculate which ones have available balances and which do not
+  /// #try "vesting with lock" lockIds.length == 1 && lockIds[0] == 1 && msg.sender == address(bytes20(bytes("0xAaAaaAAAaAaaAaAaAaaAAaAaAAAAAaAAAaaAaAa0")));
+  /// #try "vesting with lock" lockIds.length == 1 && lockIds[0] == 2 && msg.sender == address(bytes20(bytes("0xAaAaaAAAaAaaAaAaAaaAAaAaAAAAAaAAAaaAaAa0")));
   function redeemAndUnlock(
     uint256[] calldata lockIds
   )
@@ -357,6 +370,8 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
   /// @param lockIds is the array of tokenIds of the lockup NFTs
   /// @dev this function assumes that there are tokens that are vested and have already been redeemed and pulled into this contract that are now just locked and ready to be unlocked
   /// if there is nothing to unlock the function will not revert but no tokens will be moved
+  /// #try "vesting with lock" lockIds.length == 1 && lockIds[0] == 1 && msg.sender == address(bytes20(bytes("0xAaAaaAAAaAaaAaAaAaaAAaAaAAAAAaAAAaaAaAa2")));
+  /// #try "vesting with lock" lockIds.length == 1 && lockIds[0] == 2 && msg.sender == address(bytes20(bytes("0xAaAaaAAAaAaaAaAaAaaAAaAaAAAAAaAAAaaAaAa2")));
   function unlock(uint256[] calldata lockIds) external nonReentrant returns (uint256[] memory unlockedBalances) {
     uint256 l = lockIds.length;
     unlockedBalances = new uint256[](l);
@@ -368,6 +383,8 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
   /// @param lockIds is the array of tokenIds of the lockup NFTs
   /// @dev this function will redeem anything that has vested, and the vested tokens will be pulled into this contract
   /// if there are no vested tokens for a specific plan, it will not revert but simply skip it on underlying the vesting contract logic itself
+  /// #try "vesting with lock" lockIds.length == 1 && lockIds[0] == 1 && msg.sender == address(bytes20(bytes("0xAaAaaAAAaAaaAaAaAaaAAaAaAAAAAaAAAaaAaAa2")));
+  /// #try "vesting with lock" lockIds.length == 1 && lockIds[0] == 2 && msg.sender == address(bytes20(bytes("0xAaAaaAAAaAaaAaAaAaaAAaAaAAAAAaAAAaaAaAa2")));
   function redeemVestingPlans(
     uint256[] calldata lockIds
   ) external nonReentrant returns (uint256[] memory balances, uint256[] memory remainders) {
@@ -390,6 +407,11 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
   /// used only for emergency purposes where a mistake was made and the vesting plan was not supposed to be locked up or the lockup was wrong and needs to be adjusted
   /// but since only the owner of the lockup can burn the lock NFT, this allows there to be a safety mechanism in place
   /// such that it can be assumed there is agreement between the owner and the vestingAdmin to perform this emergency action
+  /// #try "vesting with lock" lockId == 1 && msg.sender == address(bytes20(bytes("0xAaAaaAAAaAaaAaAaAaaAAaAaAAAAAaAAAaaAaAa2")));
+  /// #try "vesting with lock" lockId == 2 && msg.sender == address(bytes20(bytes("0xAaAaaAAAaAaaAaAaAaaAAaAaAAAAAaAAAaaAaAa2")));
+  /// #if_succeeds "can burn only if vesting nft was revoked from this contract" hedgeyVesting.ownerOf(_vestingLocks[lockId].vestingTokenId) != address(this);
+  /// #if_succeeds "can burn only if available amount is 0" old(_vestingLocks[lockId].availableAmount) == 0;
+  /// #if_succeeds "lock token is burned" this.balanceOf(ownerOf(lockId)) == old(this.balanceOf(ownerOf(lockId))) - 1;
   function burnRevokedVesting(uint256 lockId) external nonReentrant {
     require(msg.sender == ownerOf(lockId), '!owner');
     VestingLock memory lock = _vestingLocks[lockId];
@@ -419,6 +441,45 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
   /// otherwise we will update the available amount to be the lockedBalance - where the locked balance only includes the available amount that has been physically vested and pulled into this contract already
   /// update the start time to the unlock time
   /// and update the totalAmount to be the reaminig total amount which is the initial lock total amount less the unlocked balance
+  /// #if_succeeds "Recipient balance increases appropriately"
+  ///   let sender := old(votingVaults[lockId] != address(0) ? votingVaults[lockId] : address(this)) in
+  ///     let recipient := old(ownerOf(lockId)) in
+  ///       let lock := old(_vestingLocks[lockId]) in
+  ///         let unlockedBalance, lockedBalance, unlockTime := UnlockLibrary.balanceAtTime(
+  ///           lock.start,
+  ///           lock.cliff,
+  ///           lock.totalAmount,
+  ///           lock.availableAmount,
+  ///           lock.rate,
+  ///           lock.period,
+  ///           block.timestamp
+  ///         ) in let tok := old(IERC20(lock.token)) in
+  ///           tok.balanceOf(recipient) == old(tok.balanceOf(recipient)) + unlockedBalance &&
+  ///           tok.balanceOf(sender) == old(tok.balanceOf(sender)) - unlockedBalance;
+  ///
+  /// #if_succeeds "Total amount decreases by unlockedBalance"
+  ///   let lock := old(_vestingLocks[lockId]) in
+  ///     let unlockedBalance, lockedBalance, unlockTime := UnlockLibrary.balanceAtTime(
+  ///       lock.start,
+  ///       lock.cliff,
+  ///       lock.totalAmount,
+  ///       lock.availableAmount,
+  ///       lock.rate,
+  ///       lock.period,
+  ///       block.timestamp
+  ///     ) in _vestingLocks[lockId].totalAmount == old(lock.totalAmount) - unlockedBalance;
+  ///
+  /// #if_succeeds "Available amount is set to the lockedBalance"
+  ///   let lock := old(_vestingLocks[lockId]) in
+  ///     let unlockedBalance, lockedBalance, unlockTime := UnlockLibrary.balanceAtTime(
+  ///       lock.start,
+  ///       lock.cliff,
+  ///       lock.totalAmount,
+  ///       lock.availableAmount,
+  ///       lock.rate,
+  ///       lock.period,
+  ///       block.timestamp
+  ///     ) in _vestingLocks[lockId].availableAmount == lockedBalance;
   function _unlock(uint256 lockId) internal returns (uint256 unlockedBalance) {
     require(isApprovedRedeemer(lockId, msg.sender), '!app');
     VestingLock memory lock = _vestingLocks[lockId];
@@ -465,6 +526,24 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
   /// then it will update the totalAmount of the lockup to equal the remainder of the vestingPlan plus available amount
   /// so that the total equals the amount still held by the vesting plan contract, and the amount held by this contract address
   // finally the function checks if the lockup has setup a voting vault, and if so it will transfer the tokens to the voting vault from this address
+  /// #if_succeeds "Recipient balance increases appropriately"
+  ///   let lock := old(_vestingLocks[lockId]) in
+  ///     old(hedgeyVesting.ownerOf(lock.vestingTokenId) == address(this)) ==> (
+  ///       let balance, rem, dummy := old(hedgeyVesting.planBalanceOf(lock.vestingTokenId, block.timestamp, block.timestamp)) in
+  ///         let recipient := old(votingVaults[lockId] != address(0) ? votingVaults[lockId] : address(this)) in
+  ///           let tok := old(IERC20(_vestingLocks[lockId].token)) in
+  ///             old(tok.balanceOf(recipient)) + balance == tok.balanceOf(recipient));
+  ///
+  /// #if_succeeds "Avaialble amount increases appropriately"
+  ///   let lock := old(_vestingLocks[lockId]) in
+  ///     old(hedgeyVesting.ownerOf(lock.vestingTokenId) == address(this)) ==> (
+  ///       let balance, rem, dummy := old(hedgeyVesting.planBalanceOf(lock.vestingTokenId, block.timestamp, block.timestamp)) in
+  ///             old(_vestingLocks[lockId].availableAmount) + balance == _vestingLocks[lockId].availableAmount);
+  ///
+  /// Next property may not be always true in certain malicious cases:
+  ///
+  /// #if_succeeds "Total amount is unchanged"
+  ///   old(_vestingLocks[lockId].totalAmount) == _vestingLocks[lockId].totalAmount;
   function _redeemVesting(uint256 lockId) internal returns (uint256 balance, uint256 remainder) {
     require(isApprovedRedeemer(lockId, msg.sender), '!app');
     uint256 vestingId = _vestingLocks[lockId].vestingTokenId;
@@ -547,6 +626,11 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
   /// the function will update the vestinglock storage with the new start, cliff, rate, and period parameters
   /// the function will also double check and update the vesting plan to pull in the new total amount, being the available amount and the amount still in the vesting plan
   /// the function then validates that the end date
+  /// #if_succeeds "only vesting admin can edit" old(msg.sender == _vestingLocks[lockId].vestingAdmin);
+  /// #if_succeeds "can only edit before the later of start and cliff" old(block.timestamp < _vestingLocks[lockId].start || block.timestamp < _vestingLocks[lockId].cliff);
+  /// #if_succeeds "vesting plan total amount is updated" _vestingLocks[lockId].totalAmount == old(_vestingLocks[lockId].availableAmount) + hedgeyVesting.plans(_vestingLocks[lockId].vestingTokenId).amount;
+  /// #if_succeeds "period equals to 1 if all funds are released at once" let lock := _vestingLocks[lockId] in (rate == lock.totalAmount) ==> lock.period == 1;
+  /// #if_succeeds old(_vestingLocks[lockId].availableAmount) == _vestingLocks[lockId].availableAmount;
   function editLockDetails(uint256 lockId, uint256 start, uint256 cliff, uint256 rate, uint256 period) external nonReentrant {
     VestingLock storage lock = _vestingLocks[lockId];
     require(msg.sender == lock.vestingAdmin, '!vA');
@@ -590,6 +674,10 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
   /// @param lockIds is the array of tokenIds of the lockup NFTs
   /// @param delegatees is the array of addresses that each corresponding planId will be delegated to
   /// @dev this function will call the underlying vesting plan contract and delegate the tokens to the delegatee
+  /// #if_succeeds "We still own all vesting NFTs after delegation"
+  ///   forall (uint i in lockIds) hedgeyVesting.ownerOf(_vestingLocks[lockIds[i]].vestingTokenId) == address(this);
+  /// #if_succeeds "Each vesting NFT was delegated respectively"
+  ///   forall (uint i in lockIds) hedgeyVesting.delegatedTo(_vestingLocks[lockIds[i]].vestingTokenId) == delegatees[i];
   function delegatePlans(uint256[] calldata lockIds, address[] calldata delegatees) external nonReentrant {
     require(lockIds.length == delegatees.length);
     uint256 l = lockIds.length;

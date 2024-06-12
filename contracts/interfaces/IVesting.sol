@@ -19,6 +19,8 @@ interface IVesting {
 
   function delegate(uint256 planId, address delegatee) external;
 
+  function delegatedTo(uint256 planId) external view returns (address);
+
   function delegatePlans(uint256[] calldata planIds, address[] calldata delegatees) external;
 
   function setupVoting(uint256 planId) external returns (address votingVault);
