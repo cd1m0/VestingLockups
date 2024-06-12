@@ -12,6 +12,110 @@ import './libraries/TransferHelper.sol';
 import './interfaces/IVesting.sol';
 import './periphery/VotingVault.sol';
 
+library AddrUintMap {
+  struct AUM {
+    address[] keys;
+    uint256[] values;
+    uint size;
+  }
+
+  using AddrUintMap for AUM;
+
+  function double(AUM memory m) internal view {
+    uint newLen = 2 * m.keys.length;
+    address[] memory newKeys = new address[](newLen);
+    uint256[] memory newValues = new uint256[](newLen);
+
+    for (uint i = 0; i < m.keys.length; i++) {
+      newKeys[i] = m.keys[i];
+      newValues[i] = m.values[i];
+    }
+
+    m.keys = newKeys;
+    m.values = newValues;
+  }
+
+  function set(AUM memory m, address key, uint256 val) internal view {
+    for (uint i = 0; i < m.size; i++) {
+      if (m.keys[i] == key) {
+        m.values[i] = val;
+        return;
+      }
+    }
+
+    if (m.size == m.keys.length) {
+      m.double();
+    }
+
+    m.keys[m.size] = key;
+    m.values[m.size] = val;
+    m.size++;
+  }
+
+  function get(AUM memory m, address key, uint256 def) internal view returns (uint256) {
+    for (uint i = 0; i < m.size; i++) {
+      if (m.keys[i] == key) {
+        return m.values[i];
+      }
+    }
+
+    return def;
+  }
+
+  function remove(AUM memory m, address key) internal view {
+    for (uint i = 0; i < m.size; i++) {
+      if (m.keys[i] == key) {
+        address lastKey = m.keys[m.size - 1];
+        uint256 lastVal = m.values[m.size - 1];
+
+        m.keys[i] = lastKey;
+        m.values[i] = lastVal;
+
+        m.size--;
+
+        return;
+      }
+    }
+  }
+
+  function clear(AUM memory m) internal view {
+    m.size = 0;
+  }
+}
+
+library SetList {
+  struct SL {
+    uint256[] lst;
+    mapping(uint256 => uint) idxs;
+  }
+
+  function add(SL storage s, uint256 id) internal {
+    if (s.idxs[id] != 0) {
+      return;
+    }
+
+    if (s.lst.length == 0) {
+      s.lst.push();
+    }
+
+    s.idxs[id] = s.lst.length;
+    s.lst.push(id);
+  }
+
+  function remove(SL storage s, uint256 id) internal {
+    if (s.idxs[id] == 0) {
+      return;
+    }
+
+    uint256 idx = s.idxs[id];
+    uint256 last = s.lst[s.lst.length - 1];
+
+    s.lst[idx] = last;
+    s.idxs[last] = idx;
+    s.lst.pop();
+  }
+}
+
 /// @title TokenVestingLock
 /// @notice This contract is used exclusively as an add-module for the Hedgey Vesting Plans to allow an additional lockup mechanism for tokens that are vesting
 /// This contract will point to exactly one specific Hedgey Vesting contract, and it will allow for the holder of the plan to redeem their vesting tokens
@@ -19,8 +123,11 @@ import './periphery/VotingVault.sol';
 /// based on the combined vesting and lockups schedules.
 /// @dev this contract is an ERC721 Enumerable extenstion that physically holds the Hedgey Vesting NFTs and issues recipients an NFT representing both the vesting and lockup schedule
 /// @author iceman from Hedgey
-
+/// #invariant checkVestingLocks();
 contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
+  using SetList for SetList.SL;
+  using AddrUintMap for AddrUintMap.AUM;
+
   /// @dev this is the implementation stored of the specific Hedgey Vesting contract this particular lockup contract is tied to
   IVesting public immutable hedgeyVesting;
 
@@ -70,6 +177,54 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
 
   /// @notice this is mapping of the VestingLock struct to the tokenIds which represent each NFT
   mapping(uint256 => VestingLock) internal _vestingLocks;
+  SetList.SL _vestingLocksKeys;
+
+  // This function checks:
+  //  1. The available amount is always <= the total amount
+  //  2. The available amounts for tokens match our actual balances.
+  //
+  // To check 2 we walk over all vesting locks and accumulate per token:
+  //  1. The expected available amount over all token locks
+  //  2. The balance for that token over all voting vaults for token locks with voting vaults.
+  //
+  // Then check for each token , that the total expected available amount equals
+  // the sum of our balance and all voting vaults balance for this token.
+  function checkVestingLocks() internal view returns (bool) {
+    AddrUintMap.AUM memory _tokenExpBalances;
+    AddrUintMap.AUM memory _tokenVaultBalances;
+
+    for (uint i = 0; i < _vestingLocksKeys.lst.length; i++) {
+      uint256 lockId = _vestingLocksKeys.lst[i];
+      VestingLock memory vl = _vestingLocks[lockId];
+
+      if (vl.availableAmount > vl.totalAmount) {
+        return false;
+      }
+
+      address tok = vl.token;
+
+      _tokenExpBalances.set(tok, _tokenExpBalances.get(tok, 0) + vl.availableAmount);
+
+      address vault = votingVaults[lockId];
+
+      if (vault != address(0)) {
+        _tokenVaultBalances.set(tok, _tokenVaultBalances.get(tok, 0) + IERC20(tok).balanceOf(vault));
+      }
+    }
+
+    for (uint i = 0; i < _tokenExpBalances.keys.length; i++) {
+      address tok = _tokenExpBalances.keys[i];
+      uint expected = _tokenExpBalances.get(tok, 0);
+      uint vaultBal = _tokenVaultBalances.get(tok, 0);
+      uint myBal = IERC20(tok).balanceOf(address(this));
+
+      if (myBal + vaultBal != expected) {
+        return false;
+      }
+    }
+
+    return true;
+  }
 
   /// @notice this is a mapping of the vestingTokenIds that have been allocted to a lockup NFT so that lockup NFTs are always mapped ONLY one to one to a vesting plan
   mapping(uint256 => bool) internal _allocatedVestingTokenIds;
@@ -332,6 +487,7 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
       transferable,
       adminTransferOBO
     );
+    _vestingLocksKeys.add(newLockId);
     if (recipient.adminRedeem) {
       _adminRedeem[newLockId] = true;
       emit AdminRedemption(newLockId, true);
@@ -428,6 +584,8 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
       delete _vestingLocks[lockId];
       delete _allocatedVestingTokenIds[lock.vestingTokenId];
     }
+
+    _vestingLocksKeys.remove(lockId);
   }
 
   /************CORE INTERNAL FUNCTIONS**************************************************************************************************/
@@ -509,6 +667,7 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
       _burn(lockId);
       delete _vestingLocks[lockId];
       delete _allocatedVestingTokenIds[lock.vestingTokenId];
+      _vestingLocksKeys.remove(lockId);
     } else {
       _vestingLocks[lockId].availableAmount = lockedBalance;
       _vestingLocks[lockId].start = unlockTime;
