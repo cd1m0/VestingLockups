@@ -22,7 +22,7 @@ library AddrUintMap {
   using AddrUintMap for AUM;
 
   function double(AUM memory m) internal view {
-    uint newLen = 2 * m.keys.length;
+    uint newLen = m.keys.length == 0 ? 1 : 2 * m.keys.length;
     address[] memory newKeys = new address[](newLen);
     uint256[] memory newValues = new uint256[](newLen);
 
@@ -193,7 +193,7 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
     AddrUintMap.AUM memory _tokenExpBalances;
     AddrUintMap.AUM memory _tokenVaultBalances;
 
-    for (uint i = 0; i < _vestingLocksKeys.lst.length; i++) {
+    for (uint i = 1; i < _vestingLocksKeys.lst.length; i++) {
       uint256 lockId = _vestingLocksKeys.lst[i];
       VestingLock memory vl = _vestingLocks[lockId];
 
@@ -212,7 +212,7 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
       }
     }
 
-    for (uint i = 0; i < _tokenExpBalances.keys.length; i++) {
+    for (uint i = 0; i < _tokenExpBalances.size; i++) {
       address tok = _tokenExpBalances.keys[i];
       uint expected = _tokenExpBalances.get(tok, 0);
       uint vaultBal = _tokenVaultBalances.get(tok, 0);
