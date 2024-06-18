@@ -409,7 +409,7 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
   /// such that it can be assumed there is agreement between the owner and the vestingAdmin to perform this emergency action
   /// #try "vesting with lock" lockId == 1 && msg.sender == address(bytes20(bytes("0xAaAaaAAAaAaaAaAaAaaAAaAaAAAAAaAAAaaAaAa2")));
   /// #try "vesting with lock" lockId == 2 && msg.sender == address(bytes20(bytes("0xAaAaaAAAaAaaAaAaAaaAAaAaAAAAAaAAAaaAaAa2")));
-  /// #if_succeeds "can burn only if vesting nft was revoked from this contract" hedgeyVesting.ownerOf(_vestingLocks[lockId].vestingTokenId) != address(this);
+  /// #if_succeeds "can burn only if vesting nft was revoked from this contract" old(hedgeyVesting.ownerOf(_vestingLocks[lockId].vestingTokenId) != address(this));
   /// #if_succeeds "can burn only if available amount is 0" old(_vestingLocks[lockId].availableAmount) == 0;
   /// #if_succeeds "lock token is burned" this.balanceOf(ownerOf(lockId)) == old(this.balanceOf(ownerOf(lockId))) - 1;
   function burnRevokedVesting(uint256 lockId) external nonReentrant {
