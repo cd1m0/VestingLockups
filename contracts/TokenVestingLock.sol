@@ -218,7 +218,7 @@ contract TokenVestingLock is ERC721Delegate, ReentrancyGuard, ERC721Holder {
       uint vaultBal = _tokenVaultBalances.get(tok, 0);
       uint myBal = IERC20(tok).balanceOf(address(this));
 
-      if (myBal + vaultBal != expected) {
+      if (myBal + vaultBal < expected) {
         return false;
       }
     }
